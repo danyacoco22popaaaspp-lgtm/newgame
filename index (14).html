@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sky Defender - Full Arsenal</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        :root { --danger: #ff0000; --dark-bg: #0f172a; }
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: 'Inter', sans-serif; background: var(--dark-bg); overflow: hidden; }
+        #map { height: 100%; width: 100%; background: #1a1a1a; cursor: crosshair; }
+        
+        .game-hud { 
+            position: absolute; top: 15px; left: 50%; transform: translateX(-50%); 
+            z-index: 1000; background: white; padding: 10px 20px; border-radius: 50px; 
+            display: flex; gap: 12px; align-items: center; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+        .money-display { font-weight: 900; color: #166534; font-size: 16px; border-right: 2px solid #eee; padding-right: 15px; }
+        .shop-btn { display: flex; flex-direction: column; align-items: center; cursor: pointer; border: none; background: none; }
+        .shop-btn img { width: 30px; height: 30px; object-fit: contain; }
+        .shop-btn span { font-size: 9px; font-weight: bold; color: #444; }
+        .active-buy { transform: scale(1.1); filter: drop-shadow(0 0 5px #3b82f6); }
+        
+        .spawn-controls { display: flex; gap: 4px; border-left: 2px solid #eee; padding-left: 10px; }
+        .btn-s { padding: 6px 10px; border-radius: 6px; border: none; color: white; font-weight: bold; font-size: 9px; cursor: pointer; }
+
+        .leaflet-marker-icon { transition: none !important; }
+        .unit-wrapper { will-change: transform; display: block; }
+    </style>
+</head>
+<body>
+
+    <div class="game-hud">
+        <div class="money-display">💰 <span id="balance">1000</span></div>
+        
+        <button class="shop-btn" id="btn-gun" onclick="selectAA('gun', 829)">
+            <img src="https://image2url.com/r2/default/images/1772176330959-54151c39-e5cc-41c6-91e7-d8aac1103b11.png">
+            <span>829 (СР)</span>
+        </button>
+        
+        <button class="shop-btn" id="btn-madt" onclick="selectAA('madt', 600)">
+            <img src="https://image2url.com/r2/default/images/1772176302942-4276b32f-522b-4416-b739-5f22c7a6aabe.png">
+            <span>600 (МР)</span>
+        </button>
+
+        <div class="spawn-controls">
+            <button class="btn-s" style="background:var(--danger);" onclick="startWave()">ШАХЕДЫ</button>
+            <button class="btn-s" style="background:#0057b7;" onclick="launchAviation()">ТУ-95/160</button>
+            <button class="btn-s" style="background:#4b5563;" onclick="spawnSu34()">СУ-34</button>
+            <button class="btn-s" style="background:#b91c1c;" onclick="spawnIskander()">ИСКАНДЕР</button>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const IMG = {
+            shahed: "https://image2url.com/r2/default/images/1772146401537-f40b8fae-d167-469e-8a97-a2c965e6af8a.png",
+            su34: "https://image2url.com/r2/default/images/1772149850113-87937964-2506-4610-a190-e2ab20b78b88.png",
+            kab: "https://image2url.com/r2/default/images/1772149875055-1e8a9078-cbfd-402e-a2d1-fc0d2e725ef2.png",
+            tu95: "https://image2url.com/r2/default/images/1772148322202-89ed4df5-2b1e-4151-b191-e9dccc31c3f7.png",
+            tu160: "https://image2url.com/r2/default/images/1772148190642-b7b603f7-5d59-40b4-9c2b-edb29ce1dc79.png",
+            x101: "https://image2url.com/r2/default/images/1772148172796-d7ad6909-2ba0-43c5-8876-3491ddce4be3.png",
+            iskander: "https://image2url.com/r2/default/images/1772147286546-d926f910-8832-432d-b06a-ee74a64a9b81.png",
+            gun: "https://image2url.com/r2/default/images/1772176330959-54151c39-e5cc-41c6-91e7-d8aac1103b11.png",
+            madt: "https://image2url.com/r2/default/images/1772176302942-4276b32f-522b-4416-b739-5f22c7a6aabe.png"
+        };
+
+        const POS = {
+            NAVLIA: [52.82, 34.50], KHALINO: [51.75, 36.29], ACHTARSK: [46.04, 38.15],
+            CHAUDA: [45.01, 35.84], EYISK: [46.68, 38.21], CRIMEA: [45.11, 33.97],
+            ENGELS: [51.48, 46.21], OLENYA: [68.15, 33.45], VOLOGDA: [59.22, 39.89],
+            ZAP: [47.83, 35.13], KOM: [47.71, 35.52], KYIV: [50.45, 30.52]
+        };
+
+        let map, balance = 1000, selectedAA = null, activeAA = [], enemies = [];
+
+        map = L.map('map', { zoomControl: false, attributionControl: false }).setView([48.5, 35.0], 6);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        map.on('click', (e) => { if(selectedAA) placeAA(e.latlng); });
+        setInterval(checkInterception, 100);
+
+        function getBearing(s, e) {
+            const dL = (e[1]-s[1]) * Math.PI/180;
+            const sL = s[0] * Math.PI/180;
+            const eL = e[0] * Math.PI/180;
+            const y = Math.sin(dL) * Math.cos(eL);
+            const x = Math.cos(sL)*Math.sin(eL) - Math.sin(sL)*Math.cos(eL)*Math.cos(dL);
+            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        }
+
+        function selectAA(type, price) {
+            if (balance < price) return;
+            selectedAA = { type, price };
+            document.querySelectorAll('.shop-btn').forEach(b => b.classList.remove('active-buy'));
+            document.getElementById(`btn-${type}`).classList.add('active-buy');
+        }
+
+        function placeAA(latlng) {
+            // MADT теперь имеет маленький радиус (15км), GUN - средний (35км)
+            const radius = selectedAA.type === 'madt' ? 15000 : 35000;
+            L.circle(latlng, { color: '#3b82f6', weight: 1, fillOpacity: 0.1, radius: radius, interactive: false }).addTo(map);
+            const icon = L.icon({ iconUrl: IMG[selectedAA.type], iconSize: [35, 35], iconAnchor: [17, 17] });
+            L.marker(latlng, { icon: icon, interactive: false }).addTo(map);
+            activeAA.push({ pos: latlng, radius: radius });
+            updateBalance(-selectedAA.price);
+            selectedAA = null;
+            document.querySelectorAll('.shop-btn').forEach(b => b.classList.remove('active-buy'));
+        }
+
+        function animateObject(type, start, end, speed, callback) {
+            const bearing = getBearing(start, end);
+            const size = (type.includes('tu')) ? 45 : (type === 'su34' ? 35 : 22);
+            const icon = L.divIcon({ 
+                className: 'unit-wrapper', 
+                html: `<div style="transform: rotate(${bearing}deg); width:${size}px;"><img src="${IMG[type]}" style="width:100%; display:block;"></div>`,
+                iconSize: [size, size], iconAnchor: [size/2, size/2]
+            });
+            const marker = L.marker(start, { icon: icon, interactive: false }).addTo(map);
+            const obj = { marker, active: true, type };
+            enemies.push(obj);
+
+            let progress = 0;
+            const step = speed / 4000000;
+
+            function move() {
+                if (!obj.active) return;
+                progress += step;
+                if (progress >= 1) {
+                    marker.setLatLng(end);
+                    if (callback) callback(marker); else { map.removeLayer(marker); removeEnemy(obj); }
+                    return;
+                }
+                marker.setLatLng([start[0] + (end[0]-start[0])*progress, start[1] + (end[1]-start[1])*progress]);
+                requestAnimationFrame(move);
+            }
+            requestAnimationFrame(move);
+            return obj;
+        }
+
+        function removeEnemy(obj) { obj.active = false; enemies = enemies.filter(e => e !== obj); }
+
+        function checkInterception() {
+            activeAA.forEach(aa => {
+                enemies.forEach(en => {
+                    if (!en.active || en.type.includes('tu') || en.type === 'su34') return;
+                    if (map.distance(aa.pos, en.marker.getLatLng()) < aa.radius) {
+                        fireDottedLine(aa.pos, en.marker.getLatLng());
+                        en.active = false;
+                        map.removeLayer(en.marker);
+                        removeEnemy(en);
+                        updateBalance(50);
+                    }
+                });
+            });
+        }
+
+        function fireDottedLine(start, end) {
+            for (let i = 0; i < 3; i++) {
+                setTimeout(() => {
+                    const line = L.polyline([start, end], { color: 'red', weight: 3, opacity: 0.9, dashArray: '8, 12' }).addTo(map);
+                    setTimeout(() => map.removeLayer(line), 150);
+                }, i * 100);
+            }
+        }
+
+        function updateBalance(v) { balance += v; document.getElementById('balance').innerText = balance; }
+
+        function startWave() {
+            const starts = [POS.ACHTARSK, POS.CHAUDA, POS.NAVLIA, POS.KHALINO];
+            for(let i=0; i<12; i++) {
+                setTimeout(() => {
+                    // Скорость дронов увеличена с 195 до 260
+                    animateObject('shahed', starts[i%starts.length], POS.ZAP, 260);
+                }, i * 700);
+            }
+        }
+
+        function spawnSu34() {
+            const rubezh = [46.6, 36.3];
+            animateObject('su34', POS.EYISK, rubezh, 900, (m) => {
+                for(let i=0; i<6; i++) {
+                    setTimeout(() => {
+                        const sP = [rubezh[0]+(Math.random()-0.5)*0.3, rubezh[1]+(Math.random()-0.5)*0.3];
+                        animateObject('kab', sP, POS.KOM, 420);
+                    }, i * 400);
+                }
+                setTimeout(() => { map.removeLayer(m); animateObject('su34', rubezh, POS.EYISK, 950); }, 1500);
+            });
+        }
+
+        function launchAviation() {
+            const speed = 925;
+            animateObject('tu95', POS.ENGELS, POS.VOLOGDA, speed, (m) => {
+                spawnMissiles(POS.VOLOGDA);
+                setTimeout(() => { map.removeLayer(m); animateObject('tu95', POS.VOLOGDA, POS.ENGELS, speed); }, 2000);
+            });
+            animateObject('tu160', POS.OLENYA, POS.VOLOGDA, speed, (m) => {
+                setTimeout(() => { map.removeLayer(m); animateObject('tu160', POS.VOLOGDA, POS.OLENYA, speed); }, 2000);
+            });
+        }
+
+        function spawnMissiles(from) {
+            for(let i=0; i<8; i++) {
+                setTimeout(() => animateObject('x101', from, POS.KYIV, 720), i * 300);
+            }
+        }
+
+        function spawnIskander() {
+            // Искандер летит очень быстро (7500 км/ч)
+            animateObject('iskander', POS.CRIMEA, POS.ZAP, 7500);
+        }
+    </script>
+</body>
+</html>
+
